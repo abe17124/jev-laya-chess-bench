@@ -1,27 +1,32 @@
-/* JEV vs LAYA — chess (static Pages viewer) */
+/* JEV vs LAYA — live chess (SSE). Play = new game. */
 (function () {
   "use strict";
 
-  // Populated after match JSON loads; one entry per game
-  let DEMOS = [];
-  const MATCH_PATH = "data/jev_vs_laya.json";
   const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-  const LAT_MIN_MS = 180;
-  const LAT_MAX_MS = 1400;
-  const LAT_SCALE = 0.55;
+  const MATCH_PATH = "data/jev_vs_laya.json";
 
   let board = null;
   let chess = null;
-  let matchData = null;
-  let game = null;
-  let plyIndex = 0;
-  let playing = false;
-  let playTimer = null;
-  let speed = 1;
-  let activeDemoId = null;
+  let live = false;
+  let es = null;
+  let whiteName = null;
+  let blackName = null;
+  let plyCount = 0;
+  let lastLat = { jev: null, laya: null };
 
   const $ = (sel) => document.querySelector(sel);
+
+  function apiBase() {
+    const b = (window.BENCH_API || "").replace(/\/$/, "");
+    return b;
+  }
+
+  function streamUrl(params) {
+    const q = new URLSearchParams(params || {});
+    const path = "/api/game/stream" + (q.toString() ? "?" + q.toString() : "");
+    const base = apiBase();
+    return base ? base + path : path;
+  }
 
   function escapeHtml(s) {
     return String(s)
@@ -40,155 +45,96 @@
   function fmtPct(p) {
     return (p * 100).toFixed(1) + "%";
   }
-  function normName(n) {
-    return String(n || "").toLowerCase();
-  }
   function isJev(n) {
-    return normName(n).startsWith("jev");
+    return String(n || "").toLowerCase().startsWith("jev");
   }
   function isLaya(n) {
-    return normName(n).startsWith("laya");
+    return String(n || "").toLowerCase().startsWith("laya");
   }
-
   function colorGlyph(side) {
-    // White king / Black king
     return side === "white" ? "♔" : "♚";
   }
   function colorLabel(side) {
     return side === "white" ? "White" : "Black";
   }
 
-  function updatePlayerHeaders(g, scoreboard) {
-    if (!g) return;
-    const white = g.white;
-    const black = g.black;
+  function setPlaying(on) {
+    live = on;
+    const btn = $("#btnPlay");
+    btn.disabled = on;
+    btn.textContent = on ? "… LIVE" : "▶ PLAY";
+    btn.classList.toggle("playing", on);
+    btn.title = on ? "Game in progress" : "New live game";
+  }
 
-    const setCard = (playerKey, side) => {
-      const colorEl = $(playerKey === "jev" ? "#jevColor" : "#layaColor");
-      const card = $(playerKey === "jev" ? "#cardJev" : "#cardLaya");
+  function setColors(white, black) {
+    whiteName = white;
+    blackName = black;
+    const setCard = (key, side) => {
+      const colorEl = $(key === "jev" ? "#jevColor" : "#layaColor");
+      const card = $(key === "jev" ? "#cardJev" : "#cardLaya");
       colorEl.textContent = `${colorGlyph(side)} ${colorLabel(side)}`;
       card.setAttribute("data-side", side);
     };
-
     if (isJev(white)) setCard("jev", "white");
     else if (isJev(black)) setCard("jev", "black");
-
     if (isLaya(white)) setCard("laya", "white");
     else if (isLaya(black)) setCard("laya", "black");
-
-    const sb = scoreboard || {};
-    const findSb = (pred) => {
-      for (const v of Object.values(sb)) {
-        if (pred(v.name)) return v;
-      }
-      return null;
-    };
-    const jev = findSb(isJev);
-    const laya = findSb(isLaya);
-    if (jev) {
-      $("#jevWdl").textContent = `${jev.W ?? 0}–${jev.D ?? 0}–${jev.L ?? 0}`;
-      $("#jevAvg").textContent = `avg ${fmtMs(jev.avg_ms)}`;
-    }
-    if (laya) {
-      $("#layaWdl").textContent = `${laya.W ?? 0}–${laya.D ?? 0}–${laya.L ?? 0}`;
-      $("#layaAvg").textContent = `avg ${fmtMs(laya.avg_ms)}`;
-    }
-
-    // Big score strip
-    const jW = jev ? jev.W ?? 0 : 0;
-    const lW = laya ? laya.W ?? 0 : 0;
-    const draws = jev ? jev.D ?? 0 : laya ? laya.D ?? 0 : 0;
-    $("#scoreLine").textContent = `JEV ${jW}  ·  DRAW ${draws}  ·  LAYA ${lW}`;
   }
 
-  function renderMatchList(activeId) {
-    const list = $("#matchList");
-    list.innerHTML = "";
-    for (const d of DEMOS) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "match-btn" + (d.id === activeId ? " active" : "");
-      btn.setAttribute("role", "option");
-      btn.setAttribute("aria-selected", d.id === activeId ? "true" : "false");
-      btn.innerHTML = `<span class="t">${escapeHtml(d.title)}</span><span class="s">${escapeHtml(d.subtitle)}</span>`;
-      btn.addEventListener("click", () => loadDemo(d.id));
-      list.appendChild(btn);
-    }
+  function updateLatCards() {
+    $("#jevAvg").textContent =
+      lastLat.jev == null ? "lat —" : `lat ${fmtMs(lastLat.jev)}`;
+    $("#layaAvg").textContent =
+      lastLat.laya == null ? "lat —" : `lat ${fmtMs(lastLat.laya)}`;
   }
 
-  function delayForPly(ply) {
-    const raw = Math.max(0, +(ply && ply.latency_ms) || 0);
-    const scaled = Math.min(LAT_MAX_MS, Math.max(LAT_MIN_MS, raw * LAT_SCALE + LAT_MIN_MS * 0.35));
-    return scaled / speed;
+  function resetBoard() {
+    plyCount = 0;
+    lastLat = { jev: null, laya: null };
+    updateLatCards();
+    if (chess) chess.reset();
+    if (board) board.position("start", false);
+    $("#plyLabel").textContent = "ply 0";
+    $("#hMove").textContent = "—";
+    $("#hPlayer").textContent = "—";
+    $("#hLat").textContent = "—";
+    $("#hUci").textContent = "—";
+    $("#hConf").textContent = "—";
+    $("#probs").innerHTML = "";
+    $("#resultBadge").hidden = true;
+    $("#turnBanner").textContent = "starting…";
+    $("#scoreLine").textContent = "live game starting…";
   }
 
-  function plies() {
-    return (game && game.plies) || [];
-  }
-
-  function fenAt(index) {
-    if (index <= 0) return START_FEN;
-    const p = plies()[index - 1];
-    return (p && p.fen_after) || START_FEN;
-  }
-
-  function whoseTurnAt(index) {
-    // Before any ply: white to move. After a ply, next side from fen or opposite of last ply color.
-    if (index <= 0) return { side: "white", player: game ? game.white : "—" };
-    if (index >= plies().length) return null; // game over
-    const next = plies()[index];
-    if (next) {
-      return { side: next.color || "white", player: next.player || "—" };
-    }
-    return null;
-  }
-
-  function setPosition(index, animate) {
-    plyIndex = Math.max(0, Math.min(index, plies().length));
-    const fen = fenAt(plyIndex);
-    if (chess) chess.load(fen);
-    if (board) board.position(fen, animate !== false);
-    $("#scrub").value = String(plyIndex);
-    $("#plyLabel").textContent = `ply ${plyIndex}/${plies().length}`;
-    updateHud();
-    updateResultBadge();
-    updateTurnBanner();
-  }
-
-  function updateTurnBanner() {
-    const turn = whoseTurnAt(plyIndex);
-    const el = $("#turnBanner");
-    if (!turn) {
-      el.textContent = "game over";
-      return;
-    }
-    const g = colorGlyph(turn.side);
-    const label = colorLabel(turn.side);
-    const name = (turn.player || "").toUpperCase();
-    el.textContent = `${name} to move  ${g} ${label}`;
-  }
-
-  function updateHud() {
-    const list = plies();
-    if (plyIndex === 0) {
-      $("#hMove").textContent = "start";
-      $("#hPlayer").textContent = "—";
-      $("#hLat").textContent = "—";
-      $("#hUci").textContent = "—";
-      $("#hConf").textContent = "—";
-      $("#probs").innerHTML = "";
-      return;
-    }
-    const ply = list[plyIndex - 1];
-    if (!ply) return;
-    const san = ply.san || ply.uci || "—";
-    $("#hMove").textContent = san;
+  function applyPly(ply) {
+    plyCount = ply.ply || plyCount + 1;
+    const fen = ply.fen || START_FEN;
+    if (chess && fen) chess.load(fen);
+    if (board && fen) board.position(fen, true);
+    $("#plyLabel").textContent = `ply ${plyCount}`;
+    $("#hMove").textContent = ply.san || ply.uci || "—";
     $("#hPlayer").textContent = (ply.player || "—").toUpperCase();
-    $("#hPlayer").style.color = isJev(ply.player) ? "var(--jev)" : isLaya(ply.player) ? "var(--laya)" : "inherit";
+    $("#hPlayer").style.color = isJev(ply.player)
+      ? "var(--jev)"
+      : isLaya(ply.player)
+        ? "var(--laya)"
+        : "inherit";
     $("#hLat").textContent = fmtMs(ply.latency_ms);
     $("#hUci").textContent = ply.uci || "—";
-    $("#hConf").textContent = ply.confidence == null ? "—" : (+ply.confidence).toFixed(4);
+    $("#hConf").textContent =
+      ply.confidence == null ? "—" : (+ply.confidence).toFixed(4);
     renderProbs(ply);
+
+    if (isJev(ply.player)) lastLat.jev = ply.latency_ms;
+    if (isLaya(ply.player)) lastLat.laya = ply.latency_ms;
+    updateLatCards();
+
+    const nextSide = fen.includes(" w ") ? "white" : "black";
+    const nextPlayer =
+      nextSide === "white" ? whiteName : blackName;
+    $("#turnBanner").textContent = `${(nextPlayer || "?").toUpperCase()} to move  ${colorGlyph(nextSide)} ${colorLabel(nextSide)}`;
+    $("#scoreLine").textContent = `LIVE · ${fmtMs(ply.latency_ms)} · ${(ply.player || "").toUpperCase()} ${ply.san || ply.uci || ""}`;
   }
 
   function renderProbs(ply) {
@@ -217,94 +163,127 @@
       .join("");
   }
 
-  function updateResultBadge() {
-    const badge = $("#resultBadge");
-    if (!game || plyIndex < plies().length) {
-      badge.hidden = true;
-      return;
+  function closeStream() {
+    if (es) {
+      try {
+        es.close();
+      } catch (_) {}
+      es = null;
     }
-    badge.hidden = false;
-    const r = game.result || "*";
-    const t = game.termination || "";
-    badge.textContent = `RESULT ${r}${t ? " · " + t : ""}`;
   }
 
-  function stopPlay() {
-    playing = false;
-    if (playTimer) {
-      clearTimeout(playTimer);
-      playTimer = null;
-    }
-    const btn = $("#btnPlay");
-    btn.textContent = "▶";
-    btn.classList.remove("playing");
-    btn.title = "Play";
-  }
+  function startLiveGame() {
+    if (live) return;
+    closeStream();
+    resetBoard();
+    setPlaying(true);
 
-  function scheduleNext() {
-    if (!playing) return;
-    if (plyIndex >= plies().length) {
-      stopPlay();
-      return;
-    }
-    const nextPly = plies()[plyIndex];
-    const delay = delayForPly(nextPly);
-    playTimer = setTimeout(() => {
-      setPosition(plyIndex + 1, true);
-      scheduleNext();
-    }, delay);
-  }
+    const url = streamUrl({ max_plies: "80" });
+    $("#footerNote").textContent = "live · " + url;
+    es = new EventSource(url);
 
-  function togglePlay() {
-    if (playing) {
-      stopPlay();
-      return;
-    }
-    if (plyIndex >= plies().length) setPosition(0, false);
-    playing = true;
-    const btn = $("#btnPlay");
-    btn.textContent = "❚❚";
-    btn.classList.add("playing");
-    btn.title = "Pause";
-    scheduleNext();
-  }
-
-  function buildDemosFromMatch(data) {
-    const games = data.games_detail || [];
-    return games.map((g, i) => {
-      const pliesN = (g.plies || []).length;
-      const res = g.result || "*";
-      const term = g.termination || "";
-      return {
-        id: `game_${i + 1}`,
-        title: `Game ${i + 1}: ${(g.white || "?").toUpperCase()} vs ${(g.black || "?").toUpperCase()}`,
-        subtitle: `${res}${term ? " · " + term : ""} · ${pliesN} plies`,
-        gameIndex: i,
-      };
+    es.addEventListener("hello", () => {
+      $("#scoreLine").textContent = "connected · waiting for first ply…";
     });
+
+    es.addEventListener("start", (ev) => {
+      let data = {};
+      try {
+        data = JSON.parse(ev.data);
+      } catch (_) {}
+      setColors(data.white, data.black);
+      $("#scoreLine").textContent = `LIVE · ${(data.white || "?").toUpperCase()} (W) vs ${(data.black || "?").toUpperCase()} (B)`;
+      $("#turnBanner").textContent = `${(data.white || "?").toUpperCase()} to move  ♔ White`;
+      $("#jevWdl").textContent = "live";
+      $("#layaWdl").textContent = "live";
+    });
+
+    es.addEventListener("ply", (ev) => {
+      let ply = {};
+      try {
+        ply = JSON.parse(ev.data);
+      } catch (_) {
+        return;
+      }
+      applyPly(ply);
+    });
+
+    es.addEventListener("end", (ev) => {
+      let data = {};
+      try {
+        data = JSON.parse(ev.data);
+      } catch (_) {}
+      const badge = $("#resultBadge");
+      badge.hidden = false;
+      badge.textContent = `RESULT ${data.result || "*"}${data.termination ? " · " + data.termination : ""}`;
+      $("#turnBanner").textContent = "game over";
+      $("#scoreLine").textContent = `done · ${data.result || "*"} · ${data.plies || plyCount} plies`;
+      setPlaying(false);
+      closeStream();
+    });
+
+    es.addEventListener("error", (ev) => {
+      // EventSource also fires generic "error" on network drop; only parse if data present.
+      if (ev && ev.data) {
+        let data = {};
+        try {
+          data = JSON.parse(ev.data);
+        } catch (_) {}
+        $("#scoreLine").textContent = "error · " + (data.message || "stream error");
+        $("#turnBanner").textContent = "error";
+        setPlaying(false);
+        closeStream();
+      } else if (es && es.readyState === EventSource.CLOSED) {
+        if (live) {
+          $("#scoreLine").textContent = "stream closed";
+          setPlaying(false);
+        }
+      }
+    });
+
+    es.onerror = () => {
+      if (es && es.readyState === EventSource.CLOSED && live) {
+        $("#scoreLine").textContent =
+          "could not reach API — is the live server / tunnel up?";
+        $("#turnBanner").textContent = "offline";
+        setPlaying(false);
+        closeStream();
+      }
+    };
   }
 
-  async function loadMatch() {
-    const res = await fetch(MATCH_PATH);
-    if (!res.ok) throw new Error(`Failed to load ${MATCH_PATH}: ${res.status}`);
-    matchData = await res.json();
-    DEMOS = buildDemosFromMatch(matchData);
-    if (!DEMOS.length) throw new Error("No games in match file");
-    return matchData;
-  }
-
-  async function loadDemo(id) {
-    stopPlay();
-    if (!matchData) await loadMatch();
-    const demo = DEMOS.find((d) => d.id === id) || DEMOS[0];
-    activeDemoId = demo.id;
-    renderMatchList(demo.id);
-    game = (matchData.games_detail || [])[demo.gameIndex || 0];
-    if (!game) throw new Error("No game in artifact");
-    updatePlayerHeaders(game, matchData.scoreboard);
-    $("#matchMeta").textContent = `${plies().length} plies · seed ${matchData.seed ?? "—"}`;
-    $("#scrub").max = String(plies().length);
-    setPosition(0, false);
+  /* Optional recorded replay (collapsed). */
+  async function loadReplayOptional() {
+    const box = $("#replayBox");
+    try {
+      const res = await fetch(MATCH_PATH);
+      if (!res.ok) throw new Error("no replay");
+      const data = await res.json();
+      const games = data.games_detail || [];
+      const list = $("#matchList");
+      list.innerHTML = "";
+      games.forEach((g, i) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "match-btn";
+        btn.innerHTML = `<span class="t">Game ${i + 1}</span><span class="s">${escapeHtml(g.result || "*")} · ${(g.plies || []).length} plies</span>`;
+        btn.addEventListener("click", () => {
+          if (live) return;
+          const last = (g.plies || [])[(g.plies || []).length - 1];
+          setColors(g.white, g.black);
+          if (last && last.fen_after && board) board.position(last.fen_after, false);
+          $("#scoreLine").textContent = `replay · Game ${i + 1} · ${g.result || "*"}`;
+          $("#matchMeta").textContent = "static JSON (not live)";
+          const badge = $("#resultBadge");
+          badge.hidden = false;
+          badge.textContent = `RESULT ${g.result || "*"}`;
+        });
+        list.appendChild(btn);
+      });
+      $("#matchMeta").textContent = `${games.length} recorded · optional`;
+    } catch (_) {
+      if (box) box.hidden = true;
+    }
   }
 
   function initBoard() {
@@ -319,58 +298,31 @@
     window.addEventListener("resize", () => board && board.resize());
   }
 
-  function wireControls() {
-    $("#btnStart").addEventListener("click", () => {
-      stopPlay();
-      setPosition(0, false);
-    });
-    $("#btnBack").addEventListener("click", () => {
-      stopPlay();
-      setPosition(plyIndex - 1, true);
-    });
-    $("#btnFwd").addEventListener("click", () => {
-      stopPlay();
-      setPosition(plyIndex + 1, true);
-    });
-    $("#btnEnd").addEventListener("click", () => {
-      stopPlay();
-      setPosition(plies().length, false);
-    });
-    $("#btnPlay").addEventListener("click", togglePlay);
-    $("#scrub").addEventListener("input", (e) => {
-      stopPlay();
-      setPosition(+e.target.value, false);
-    });
-    $("#speed").addEventListener("input", (e) => {
-      speed = +e.target.value || 1;
-      $("#speedLabel").textContent = speed + "×";
-    });
+  function boot() {
+    initBoard();
+    $("#btnPlay").addEventListener("click", startLiveGame);
     document.addEventListener("keydown", (e) => {
       if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
-      if (e.key === " ") {
+      if (e.key === " " || e.key === "Enter") {
         e.preventDefault();
-        togglePlay();
-      } else if (e.key === "ArrowRight") {
-        stopPlay();
-        setPosition(plyIndex + 1, true);
-      } else if (e.key === "ArrowLeft") {
-        stopPlay();
-        setPosition(plyIndex - 1, true);
+        startLiveGame();
       }
     });
-  }
-
-  async function boot() {
-    initBoard();
-    wireControls();
-    try {
-      await loadMatch();
-      await loadDemo(DEMOS[0].id);
-    } catch (err) {
-      console.error(err);
-      $("#matchMeta").textContent = String(err.message || err);
-      $("#scoreLine").textContent = "match data missing — run bench";
-    }
+    loadReplayOptional();
+    // Probe health if same-origin or BENCH_API set
+    const base = apiBase();
+    const healthUrl = (base || "") + "/health";
+    fetch(healthUrl)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((h) => {
+        if (!h) return;
+        $("#footerNote").textContent =
+          `api ok · key ${h.typesafe_api_key} · press PLAY`;
+      })
+      .catch(() => {
+        $("#footerNote").textContent =
+          "no live API on this origin — set window.BENCH_API or open the tunnel URL";
+      });
   }
 
   if (document.readyState === "loading") {

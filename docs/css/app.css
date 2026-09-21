@@ -258,3 +258,15 @@ body {
   .stage { grid-template-columns: 1fr; }
   .ply-readout { margin-left: 0; }
 }
+
+.controls button.big {
+  font-size: 1.15rem;
+  font-weight: 700;
+  padding: 0.55rem 1.25rem;
+  letter-spacing: 0.04em;
+}
+.controls button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.replay-opt { margin-top: 0.85rem; }

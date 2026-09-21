@@ -3,65 +3,51 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>JEV vs LAYA — chess</title>
-  <meta name="description" content="Jev vs Laya head-to-head chess match." />
+  <title>JEV vs LAYA — live chess</title>
+  <meta name="description" content="Live Jev vs Laya chess — Play starts a new game." />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
   <link rel="stylesheet" href="css/app.css" />
 </head>
 <body>
-  <pre class="ascii-frame top" aria-hidden="true">┌──────────────────────────────────────────────────────────────┐
-│  JEV vs LAYA — chess                                         │
-└──────────────────────────────────────────────────────────────┘</pre>
-
   <header class="site-header">
-    <h1 class="title">JEV vs LAYA — chess</h1>
+    <h1 class="title">JEV vs LAYA — live</h1>
     <a class="gh-link" href="https://github.com/abe17124/jev-laya-chess-bench" target="_blank" rel="noopener">github</a>
   </header>
 
   <section class="players" id="players" aria-label="Players">
     <div class="player-card" id="cardJev" data-player="jev">
       <div class="ascii-box">
-        <div class="box-top">┌─ JEV ─────────────────┐</div>
         <div class="box-body">
-          <div class="who"><span class="pname">JEV</span> <span class="color-tag" id="jevColor">♔ White</span></div>
-          <div class="wdl" id="jevWdl">W–D–L  ·  ·  ·</div>
-          <div class="avg" id="jevAvg">avg —</div>
+          <div class="who"><span class="pname">JEV</span> <span class="color-tag" id="jevColor">—</span></div>
+          <div class="wdl" id="jevWdl">live</div>
+          <div class="avg" id="jevAvg">lat —</div>
         </div>
-        <div class="box-bot">└───────────────────────┘</div>
       </div>
     </div>
     <div class="vs">vs</div>
     <div class="player-card" id="cardLaya" data-player="laya">
       <div class="ascii-box">
-        <div class="box-top">┌─ LAYA ────────────────┐</div>
         <div class="box-body">
-          <div class="who"><span class="pname">LAYA</span> <span class="color-tag" id="layaColor">♚ Black</span></div>
-          <div class="wdl" id="layaWdl">W–D–L  ·  ·  ·</div>
-          <div class="avg" id="layaAvg">avg —</div>
+          <div class="who"><span class="pname">LAYA</span> <span class="color-tag" id="layaColor">—</span></div>
+          <div class="wdl" id="layaWdl">live</div>
+          <div class="avg" id="layaAvg">lat —</div>
         </div>
-        <div class="box-bot">└───────────────────────┘</div>
       </div>
     </div>
   </section>
 
-  <section class="scoreboard-strip" id="scoreboardStrip" aria-label="Match score">
-    <span id="scoreLine">score —</span>
+  <section class="scoreboard-strip" id="scoreboardStrip" aria-label="Status">
+    <span id="scoreLine">press PLAY for a new live game</span>
   </section>
 
   <main class="stage">
     <section class="board-panel">
-      <div class="turn-banner" id="turnBanner">—</div>
+      <div class="turn-banner" id="turnBanner">ready</div>
       <div id="board" class="board"></div>
       <div class="controls" id="controls">
-        <button type="button" id="btnStart" title="Start">⏮</button>
-        <button type="button" id="btnBack" title="Back">◀</button>
-        <button type="button" id="btnPlay" class="primary" title="Play">▶</button>
-        <button type="button" id="btnFwd" title="Forward">▶</button>
-        <button type="button" id="btnEnd" title="End">⏭</button>
-        <label class="speed">spd <input type="range" id="speed" min="0.25" max="4" step="0.25" value="1" /><span id="speedLabel">1×</span></label>
-        <span class="ply-readout" id="plyLabel">ply 0/0</span>
+        <button type="button" id="btnPlay" class="primary big" title="New live game">▶ PLAY</button>
+        <span class="ply-readout" id="plyLabel">ply 0</span>
       </div>
-      <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Scrub" />
     </section>
 
     <aside class="hud-panel">
@@ -74,21 +60,25 @@
         </div>
         <div class="now-result" id="resultBadge" hidden></div>
       </div>
-      <div class="game-picker" id="matchList" role="listbox" aria-label="Games"></div>
       <details class="more">
         <summary>details</summary>
         <div class="hud-row"><span>uci</span><span class="mono" id="hUci">—</span></div>
         <div class="hud-row"><span>conf</span><span id="hConf">—</span></div>
         <div class="probs" id="probs"></div>
       </details>
-      <div class="meta-block" id="matchMeta"></div>
+      <details class="more replay-opt" id="replayBox">
+        <summary>last replay (optional)</summary>
+        <div class="game-picker" id="matchList" role="listbox" aria-label="Recorded games"></div>
+        <div class="meta-block" id="matchMeta"></div>
+      </details>
     </aside>
   </main>
 
   <footer class="site-footer">
-    <span>docs/data/jev_vs_laya.json</span>
+    <span id="footerNote">live via /api/game/stream · Pages alone is static</span>
   </footer>
 
+  <script src="config.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>

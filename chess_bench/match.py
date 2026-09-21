@@ -14,7 +14,7 @@ from chess_bench.scoreboard import PlayerStats, empty_stats, format_scoreboard
 from chess_bench.visual import export_game_html, render_terminal_board
 
 
-OnPly = Callable[[chess.Board, MoveDecision, str], None]
+OnPly = Callable[[dict[str, Any], chess.Board, MoveDecision], None]
 
 
 def play_game(
@@ -60,13 +60,14 @@ def play_game(
             "illegal": illegal,
             "error": decision.error,
             "fen_after": board.fen() if not illegal else board.fen(),
+            "fen": board.fen() if not illegal else board.fen(),
         }
         plies.append(ply_rec)
 
         if show_board and not illegal:
             print(render_terminal_board(board, last_uci=uci))
         if on_ply:
-            on_ply(board, decision, player.name)
+            on_ply(ply_rec, board, decision)
 
         if illegal:
             # Side that played illegally loses.
