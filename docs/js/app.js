@@ -1,76 +1,104 @@
-/* Jev vs Laya Chess Bench — static GitHub Pages viewer */
+/* JEV vs LAYA — chess (static Pages viewer) */
 (function () {
   "use strict";
 
-  const DEMOS = [
-    {
-      id: "laya_vs_random",
-      title: "Laya vs Random",
-      subtitle: "System One (Laya) · 12 plies · draw @ max_plies",
-      path: "data/laya_vs_random.json",
-      gameIndex: 0,
-    },
-    {
-      id: "random_vs_random",
-      title: "Random vs Random",
-      subtitle: "Decisive checkmate in 29 plies (seed 7)",
-      path: "data/random_vs_random.json",
-      gameIndex: 0,
-    },
-  ];
-
+  // Populated after match JSON loads; one entry per game
+  let DEMOS = [];
+  const MATCH_PATH = "data/jev_vs_laya.json";
   const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-  // Latency → delay for demo watchability
   const LAT_MIN_MS = 180;
   const LAT_MAX_MS = 1400;
-  const LAT_SCALE = 0.55; // model latencies (~500ms) stay readable; random snaps scaled up via floor
+  const LAT_SCALE = 0.55;
 
   let board = null;
   let chess = null;
   let matchData = null;
   let game = null;
-  let plyIndex = 0; // 0 = start position; N = after Nth ply
+  let plyIndex = 0;
   let playing = false;
   let playTimer = null;
   let speed = 1;
-  let cache = {};
+  let activeDemoId = null;
 
   const $ = (sel) => document.querySelector(sel);
 
-  function playerColor(name) {
-    const n = (name || "").toLowerCase();
-    if (n.startsWith("laya")) return "var(--laya)";
-    if (n.startsWith("jev")) return "var(--jev)";
-    return "var(--random)";
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+  function fmtMs(v) {
+    if (v == null || Number.isNaN(+v)) return "—";
+    const n = +v;
+    if (n < 10) return n.toFixed(2) + " ms";
+    if (n < 1000) return Math.round(n) + " ms";
+    return (n / 1000).toFixed(2) + " s";
+  }
+  function fmtPct(p) {
+    return (p * 100).toFixed(1) + "%";
+  }
+  function normName(n) {
+    return String(n || "").toLowerCase();
+  }
+  function isJev(n) {
+    return normName(n).startsWith("jev");
+  }
+  function isLaya(n) {
+    return normName(n).startsWith("laya");
   }
 
-  function renderScoreboard(scoreboard) {
-    const el = $("#scoreboard");
-    el.innerHTML = "";
-    const entries = Object.values(scoreboard || {});
-    if (!entries.length) {
-      el.innerHTML = '<div class="card"><span class="muted">No scoreboard</span></div>';
-      return;
+  function colorGlyph(side) {
+    // White king / Black king
+    return side === "white" ? "♔" : "♚";
+  }
+  function colorLabel(side) {
+    return side === "white" ? "White" : "Black";
+  }
+
+  function updatePlayerHeaders(g, scoreboard) {
+    if (!g) return;
+    const white = g.white;
+    const black = g.black;
+
+    const setCard = (playerKey, side) => {
+      const colorEl = $(playerKey === "jev" ? "#jevColor" : "#layaColor");
+      const card = $(playerKey === "jev" ? "#cardJev" : "#cardLaya");
+      colorEl.textContent = `${colorGlyph(side)} ${colorLabel(side)}`;
+      card.setAttribute("data-side", side);
+    };
+
+    if (isJev(white)) setCard("jev", "white");
+    else if (isJev(black)) setCard("jev", "black");
+
+    if (isLaya(white)) setCard("laya", "white");
+    else if (isLaya(black)) setCard("laya", "black");
+
+    const sb = scoreboard || {};
+    const findSb = (pred) => {
+      for (const v of Object.values(sb)) {
+        if (pred(v.name)) return v;
+      }
+      return null;
+    };
+    const jev = findSb(isJev);
+    const laya = findSb(isLaya);
+    if (jev) {
+      $("#jevWdl").textContent = `${jev.W ?? 0}–${jev.D ?? 0}–${jev.L ?? 0}`;
+      $("#jevAvg").textContent = `avg ${fmtMs(jev.avg_ms)}`;
     }
-    for (const s of entries) {
-      const card = document.createElement("div");
-      card.className = "card";
-      const pname = s.name || "player";
-      card.innerHTML = `
-        <div class="name" data-player="${escapeAttr(pname)}"><span class="dot"></span>${escapeHtml(pname)}</div>
-        <div class="stats">
-          <div><span class="n">${s.W ?? 0}</span><span class="l">Wins</span></div>
-          <div><span class="n">${s.D ?? 0}</span><span class="l">Draws</span></div>
-          <div><span class="n">${s.L ?? 0}</span><span class="l">Losses</span></div>
-        </div>
-        <div class="lat">
-          <span>avg <strong>${fmtMs(s.avg_ms)}</strong></span>
-          <span>p50 <strong>${fmtMs(s.p50_ms)}</strong></span>
-          <span>illegal <strong>${s.illegal ?? 0}</strong></span>
-        </div>`;
-      el.appendChild(card);
+    if (laya) {
+      $("#layaWdl").textContent = `${laya.W ?? 0}–${laya.D ?? 0}–${laya.L ?? 0}`;
+      $("#layaAvg").textContent = `avg ${fmtMs(laya.avg_ms)}`;
     }
+
+    // Big score strip
+    const jW = jev ? jev.W ?? 0 : 0;
+    const lW = laya ? laya.W ?? 0 : 0;
+    const draws = jev ? jev.D ?? 0 : laya ? laya.D ?? 0 : 0;
+    $("#scoreLine").textContent = `JEV ${jW}  ·  DRAW ${draws}  ·  LAYA ${lW}`;
   }
 
   function renderMatchList(activeId) {
@@ -88,30 +116,8 @@
     }
   }
 
-  function escapeHtml(s) {
-    return String(s)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
-  function escapeAttr(s) {
-    return escapeHtml(s).replace(/'/g, "&#39;");
-  }
-  function fmtMs(v) {
-    if (v == null || Number.isNaN(+v)) return "—";
-    const n = +v;
-    if (n < 10) return n.toFixed(2) + " ms";
-    if (n < 1000) return Math.round(n) + " ms";
-    return (n / 1000).toFixed(2) + " s";
-  }
-  function fmtPct(p) {
-    return (p * 100).toFixed(1) + "%";
-  }
-
   function delayForPly(ply) {
     const raw = Math.max(0, +(ply && ply.latency_ms) || 0);
-    // Scale: random (~0ms) → LAT_MIN; model (~400–500) → ~220–275; cap LAT_MAX
     const scaled = Math.min(LAT_MAX_MS, Math.max(LAT_MIN_MS, raw * LAT_SCALE + LAT_MIN_MS * 0.35));
     return scaled / speed;
   }
@@ -126,52 +132,62 @@
     return (p && p.fen_after) || START_FEN;
   }
 
+  function whoseTurnAt(index) {
+    // Before any ply: white to move. After a ply, next side from fen or opposite of last ply color.
+    if (index <= 0) return { side: "white", player: game ? game.white : "—" };
+    if (index >= plies().length) return null; // game over
+    const next = plies()[index];
+    if (next) {
+      return { side: next.color || "white", player: next.player || "—" };
+    }
+    return null;
+  }
+
   function setPosition(index, animate) {
     plyIndex = Math.max(0, Math.min(index, plies().length));
     const fen = fenAt(plyIndex);
     if (chess) chess.load(fen);
-    if (board) {
-      board.position(fen, animate !== false);
-    }
+    if (board) board.position(fen, animate !== false);
     $("#scrub").value = String(plyIndex);
-    $("#plyLabel").textContent = `Ply ${plyIndex} / ${plies().length}`;
+    $("#plyLabel").textContent = `ply ${plyIndex}/${plies().length}`;
     updateHud();
     updateResultBadge();
+    updateTurnBanner();
+  }
+
+  function updateTurnBanner() {
+    const turn = whoseTurnAt(plyIndex);
+    const el = $("#turnBanner");
+    if (!turn) {
+      el.textContent = "game over";
+      return;
+    }
+    const g = colorGlyph(turn.side);
+    const label = colorLabel(turn.side);
+    const name = (turn.player || "").toUpperCase();
+    el.textContent = `${name} to move  ${g} ${label}`;
   }
 
   function updateHud() {
     const list = plies();
     if (plyIndex === 0) {
+      $("#hMove").textContent = "start";
       $("#hPlayer").textContent = "—";
-      $("#hColor").textContent = "starting position";
-      $("#hUci").textContent = "—";
-      $("#hSan").textContent = "—";
-      $("#hConf").textContent = "—";
       $("#hLat").textContent = "—";
-      $("#latFill").style.width = "0%";
-      $("#probs").innerHTML = '<p class="muted">Press play or step to see move HUD.</p>';
+      $("#hUci").textContent = "—";
+      $("#hConf").textContent = "—";
+      $("#probs").innerHTML = "";
       return;
     }
     const ply = list[plyIndex - 1];
     if (!ply) return;
-    $("#hPlayer").textContent = ply.player || "—";
-    $("#hPlayer").style.color = playerColor(ply.player);
-    $("#hColor").textContent = ply.color || "—";
-    $("#hUci").textContent = ply.uci || "—";
-    $("#hSan").textContent = ply.san || "—";
-    $("#hConf").textContent =
-      ply.confidence == null ? "—" : (+ply.confidence).toFixed(4);
+    const san = ply.san || ply.uci || "—";
+    $("#hMove").textContent = san;
+    $("#hPlayer").textContent = (ply.player || "—").toUpperCase();
+    $("#hPlayer").style.color = isJev(ply.player) ? "var(--jev)" : isLaya(ply.player) ? "var(--laya)" : "inherit";
     $("#hLat").textContent = fmtMs(ply.latency_ms);
-
-    // Latency bar relative to match max (cap visual at 1000ms for random+model mix)
-    const maxLat = Math.max(
-      500,
-      ...list.map((p) => +p.latency_ms || 0).filter((x) => x > 0),
-      1
-    );
-    const pct = Math.min(100, ((+ply.latency_ms || 0) / maxLat) * 100);
-    $("#latFill").style.width = pct + "%";
-
+    $("#hUci").textContent = ply.uci || "—";
+    $("#hConf").textContent = ply.confidence == null ? "—" : (+ply.confidence).toFixed(4);
     renderProbs(ply);
   }
 
@@ -182,9 +198,9 @@
       .map(([uci, p]) => ({ uci, p: +p }))
       .filter((e) => !Number.isNaN(e.p))
       .sort((a, b) => b.p - a.p)
-      .slice(0, 12);
+      .slice(0, 6);
     if (!entries.length) {
-      box.innerHTML = '<p class="muted">No probabilities for this ply.</p>';
+      box.innerHTML = "";
       return;
     }
     const maxP = entries[0].p || 1;
@@ -203,18 +219,14 @@
 
   function updateResultBadge() {
     const badge = $("#resultBadge");
-    if (!game) {
-      badge.hidden = true;
-      return;
-    }
-    if (plyIndex < plies().length) {
+    if (!game || plyIndex < plies().length) {
       badge.hidden = true;
       return;
     }
     badge.hidden = false;
     const r = game.result || "*";
     const t = game.termination || "";
-    badge.textContent = `Result ${r}${t ? " · " + t : ""}`;
+    badge.textContent = `RESULT ${r}${t ? " · " + t : ""}`;
   }
 
   function stopPlay() {
@@ -235,7 +247,7 @@
       stopPlay();
       return;
     }
-    const nextPly = plies()[plyIndex]; // about to play this one
+    const nextPly = plies()[plyIndex];
     const delay = delayForPly(nextPly);
     playTimer = setTimeout(() => {
       setPosition(plyIndex + 1, true);
@@ -257,36 +269,42 @@
     scheduleNext();
   }
 
-  async function fetchDemo(demo) {
-    if (cache[demo.id]) return cache[demo.id];
-    const res = await fetch(demo.path);
-    if (!res.ok) throw new Error(`Failed to load ${demo.path}: ${res.status}`);
-    const data = await res.json();
-    cache[demo.id] = data;
-    return data;
+  function buildDemosFromMatch(data) {
+    const games = data.games_detail || [];
+    return games.map((g, i) => {
+      const pliesN = (g.plies || []).length;
+      const res = g.result || "*";
+      const term = g.termination || "";
+      return {
+        id: `game_${i + 1}`,
+        title: `Game ${i + 1}: ${(g.white || "?").toUpperCase()} vs ${(g.black || "?").toUpperCase()}`,
+        subtitle: `${res}${term ? " · " + term : ""} · ${pliesN} plies`,
+        gameIndex: i,
+      };
+    });
+  }
+
+  async function loadMatch() {
+    const res = await fetch(MATCH_PATH);
+    if (!res.ok) throw new Error(`Failed to load ${MATCH_PATH}: ${res.status}`);
+    matchData = await res.json();
+    DEMOS = buildDemosFromMatch(matchData);
+    if (!DEMOS.length) throw new Error("No games in match file");
+    return matchData;
   }
 
   async function loadDemo(id) {
     stopPlay();
+    if (!matchData) await loadMatch();
     const demo = DEMOS.find((d) => d.id === id) || DEMOS[0];
+    activeDemoId = demo.id;
     renderMatchList(demo.id);
-    try {
-      matchData = await fetchDemo(demo);
-      game = (matchData.games_detail || [])[demo.gameIndex || 0];
-      if (!game) throw new Error("No game in artifact");
-      renderScoreboard(matchData.scoreboard);
-      $("#matchMeta").innerHTML = `
-        <div><strong>${escapeHtml(game.white)}</strong> (White) vs <strong>${escapeHtml(game.black)}</strong> (Black)</div>
-        <div style="margin-top:.35rem">Result <strong>${escapeHtml(game.result || "*")}</strong>
-          · ${escapeHtml(game.termination || "")}
-          · ${plies().length} plies
-          · seed ${escapeHtml(String(matchData.seed ?? "—"))}</div>`;
-      $("#scrub").max = String(plies().length);
-      setPosition(0, false);
-    } catch (err) {
-      console.error(err);
-      $("#matchMeta").innerHTML = `<span style="color:var(--danger)">${escapeHtml(err.message)}</span>`;
-    }
+    game = (matchData.games_detail || [])[demo.gameIndex || 0];
+    if (!game) throw new Error("No game in artifact");
+    updatePlayerHeaders(game, matchData.scoreboard);
+    $("#matchMeta").textContent = `${plies().length} plies · seed ${matchData.seed ?? "—"}`;
+    $("#scrub").max = String(plies().length);
+    setPosition(0, false);
   }
 
   function initBoard() {
@@ -342,11 +360,17 @@
     });
   }
 
-  function boot() {
+  async function boot() {
     initBoard();
     wireControls();
-    renderMatchList(DEMOS[0].id);
-    loadDemo(DEMOS[0].id);
+    try {
+      await loadMatch();
+      await loadDemo(DEMOS[0].id);
+    } catch (err) {
+      console.error(err);
+      $("#matchMeta").textContent = String(err.message || err);
+      $("#scoreLine").textContent = "match data missing — run bench";
+    }
   }
 
   if (document.readyState === "loading") {

@@ -3,73 +3,90 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jev vs Laya — Chess Bench</title>
-  <meta name="description" content="Tony-style System One head-to-head chess bench. Legal moves only. Replay Laya and random demos." />
-  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin />
+  <title>JEV vs LAYA — chess</title>
+  <meta name="description" content="Jev vs Laya head-to-head chess match." />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
   <link rel="stylesheet" href="css/app.css" />
 </head>
 <body>
-  <div class="bg-grid" aria-hidden="true"></div>
+  <pre class="ascii-frame top" aria-hidden="true">┌──────────────────────────────────────────────────────────────┐
+│  JEV vs LAYA — chess                                         │
+└──────────────────────────────────────────────────────────────┘</pre>
+
   <header class="site-header">
-    <div class="brand">
-      <span class="brand-mark">♛</span>
-      <div>
-        <h1>Jev vs Laya — Chess Bench</h1>
-        <p class="tagline">Tony-style System One head-to-head. Legal UCI moves only. Scoreboard + latency + top-N probs.</p>
-      </div>
-    </div>
-    <a class="gh-link" href="https://github.com/abe17124/jev-laya-chess-bench" target="_blank" rel="noopener">GitHub ↗</a>
+    <h1 class="title">JEV vs LAYA — chess</h1>
+    <a class="gh-link" href="https://github.com/abe17124/jev-laya-chess-bench" target="_blank" rel="noopener">github</a>
   </header>
 
-  <section class="scoreboard" id="scoreboard" aria-label="Match scoreboard"></section>
+  <section class="players" id="players" aria-label="Players">
+    <div class="player-card" id="cardJev" data-player="jev">
+      <div class="ascii-box">
+        <div class="box-top">┌─ JEV ─────────────────┐</div>
+        <div class="box-body">
+          <div class="who"><span class="pname">JEV</span> <span class="color-tag" id="jevColor">♔ White</span></div>
+          <div class="wdl" id="jevWdl">W–D–L  ·  ·  ·</div>
+          <div class="avg" id="jevAvg">avg —</div>
+        </div>
+        <div class="box-bot">└───────────────────────┘</div>
+      </div>
+    </div>
+    <div class="vs">vs</div>
+    <div class="player-card" id="cardLaya" data-player="laya">
+      <div class="ascii-box">
+        <div class="box-top">┌─ LAYA ────────────────┐</div>
+        <div class="box-body">
+          <div class="who"><span class="pname">LAYA</span> <span class="color-tag" id="layaColor">♚ Black</span></div>
+          <div class="wdl" id="layaWdl">W–D–L  ·  ·  ·</div>
+          <div class="avg" id="layaAvg">avg —</div>
+        </div>
+        <div class="box-bot">└───────────────────────┘</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="scoreboard-strip" id="scoreboardStrip" aria-label="Match score">
+    <span id="scoreLine">score —</span>
+  </section>
 
   <main class="stage">
-    <aside class="panel match-panel">
-      <h2>Match picker</h2>
-      <div class="match-list" id="matchList" role="listbox" aria-label="Demo matches"></div>
-      <div class="meta-block" id="matchMeta"></div>
-    </aside>
-
-    <section class="panel board-panel">
+    <section class="board-panel">
+      <div class="turn-banner" id="turnBanner">—</div>
       <div id="board" class="board"></div>
       <div class="controls" id="controls">
         <button type="button" id="btnStart" title="Start">⏮</button>
-        <button type="button" id="btnBack" title="Step back">◀</button>
-        <button type="button" id="btnPlay" class="primary" title="Play / Pause">▶</button>
-        <button type="button" id="btnFwd" title="Step forward">▶</button>
+        <button type="button" id="btnBack" title="Back">◀</button>
+        <button type="button" id="btnPlay" class="primary" title="Play">▶</button>
+        <button type="button" id="btnFwd" title="Forward">▶</button>
         <button type="button" id="btnEnd" title="End">⏭</button>
-        <label class="speed">
-          Speed
-          <input type="range" id="speed" min="0.25" max="4" step="0.25" value="1" />
-          <span id="speedLabel">1×</span>
-        </label>
-        <div class="ply-readout"><span id="plyLabel">Ply 0 / 0</span></div>
+        <label class="speed">spd <input type="range" id="speed" min="0.25" max="4" step="0.25" value="1" /><span id="speedLabel">1×</span></label>
+        <span class="ply-readout" id="plyLabel">ply 0/0</span>
       </div>
-      <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Scrub plies" />
+      <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Scrub" />
     </section>
 
-    <aside class="panel hud-panel">
-      <h2>HUD</h2>
-      <div class="hud" id="hud">
-        <div class="hud-row"><span class="k">Player</span><span class="v" id="hPlayer">—</span></div>
-        <div class="hud-row"><span class="k">Color</span><span class="v" id="hColor">—</span></div>
-        <div class="hud-row"><span class="k">UCI</span><span class="v mono" id="hUci">—</span></div>
-        <div class="hud-row"><span class="k">SAN</span><span class="v mono" id="hSan">—</span></div>
-        <div class="hud-row"><span class="k">Confidence</span><span class="v" id="hConf">—</span></div>
-        <div class="latency-block">
-          <div class="hud-row"><span class="k">Latency</span><span class="v" id="hLat">—</span></div>
-          <div class="lat-bar"><div class="lat-fill" id="latFill"></div></div>
+    <aside class="hud-panel">
+      <pre class="ascii-label">┌─ NOW ─────────────┐</pre>
+      <div class="now" id="nowBlock">
+        <div class="now-move" id="hMove">—</div>
+        <div class="now-meta">
+          <span id="hPlayer">—</span>
+          <span id="hLat">—</span>
         </div>
-        <h3>Top move probabilities</h3>
-        <div class="probs" id="probs"><p class="muted">No probabilities for this ply.</p></div>
+        <div class="now-result" id="resultBadge" hidden></div>
       </div>
-      <div class="result-badge" id="resultBadge" hidden></div>
+      <div class="game-picker" id="matchList" role="listbox" aria-label="Games"></div>
+      <details class="more">
+        <summary>details</summary>
+        <div class="hud-row"><span>uci</span><span class="mono" id="hUci">—</span></div>
+        <div class="hud-row"><span>conf</span><span id="hConf">—</span></div>
+        <div class="probs" id="probs"></div>
+      </details>
+      <div class="meta-block" id="matchMeta"></div>
     </aside>
   </main>
 
   <footer class="site-footer">
-    <p>Static GitHub Pages demo · data from <code>docs/data/*.json</code> · no API keys · Apache-2.0 harness</p>
+    <span>docs/data/jev_vs_laya.json</span>
   </footer>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
