@@ -166,8 +166,31 @@ body {
 .controls button.playing { background: var(--accent); color: #fff; border-color: var(--accent); }
 .controls button:hover { background: var(--bg2); color: var(--ink); }
 .controls button.primary:hover { background: #333; color: #fff; }
-.speed { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: var(--muted); }
-.speed input { width: 80px; }
+.speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border: 1.5px solid var(--ink);
+  background: #fff;
+  padding: 0.25rem 0.5rem;
+  cursor: default;
+}
+.speed-ends { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.speed input[type="range"] {
+  width: 110px;
+  accent-color: var(--ink);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.speed-label {
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  min-width: 6.5rem;
+  white-space: nowrap;
+}
 .ply-readout { margin-left: auto; font-size: 0.85rem; font-weight: 700; }
 #scrub { width: 100%; margin-top: 0.45rem; }
 
@@ -270,21 +293,6 @@ body {
   cursor: not-allowed;
 }
 .replay-opt { margin-top: 0.85rem; }
-
-.speed button.active {
-  background: var(--ink);
-  color: #fff;
-}
-.speed button {
-  font-family: var(--mono);
-  background: #fff;
-  border: 1.5px solid var(--ink);
-  color: var(--ink);
-  padding: 0.25rem 0.45rem;
-  cursor: pointer;
-  font-size: 0.8rem;
-}
-.speed button:hover { background: var(--bg2); }
 
 .controls button.replay {
   background: #fff;

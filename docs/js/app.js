@@ -4,7 +4,9 @@
 
   const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
   const MATCH_PATH = "data/jev_vs_laya.json";
-  const SPEEDS = { slow: 1400, normal: 850, fast: 350 };
+  const PACE_MIN_MS = 200;
+  const PACE_MAX_MS = 2000;
+  const PACE_DEFAULT_MS = 850;
 
   let board = null;
   let chess = null;
@@ -20,7 +22,7 @@
   let revealQueue = [];
   let revealTimer = null;
   let revealBusy = false;
-  let paceMs = SPEEDS.normal;
+  let paceMs = PACE_DEFAULT_MS;
   let pendingEnd = null;
   let streamDone = false;
 
@@ -372,12 +374,23 @@
     }
   }
 
-  function setSpeed(name) {
-    const key = String(name || "normal").toLowerCase();
-    paceMs = SPEEDS[key] || SPEEDS.normal;
-    document.querySelectorAll("[data-speed]").forEach((el) => {
-      el.classList.toggle("active", el.getAttribute("data-speed") === key);
-    });
+  function clampPace(ms) {
+    const n = Math.round(+ms);
+    if (Number.isNaN(n)) return PACE_DEFAULT_MS;
+    return Math.min(PACE_MAX_MS, Math.max(PACE_MIN_MS, n));
+  }
+
+  function updateSpeedLabel() {
+    const label = $("#speedLabel");
+    if (label) label.textContent = paceMs + " ms/move";
+  }
+
+  /** Continuous delay between plies (replay + live reveal share paceMs). */
+  function setPaceMs(ms) {
+    paceMs = clampPace(ms);
+    const slider = $("#speedSlider");
+    if (slider && +slider.value !== paceMs) slider.value = String(paceMs);
+    updateSpeedLabel();
   }
 
   function storeCompletedGame(endData) {
@@ -579,10 +592,12 @@
     initBoard();
     $("#btnPlay").addEventListener("click", startLiveGame);
     $("#btnReplay").addEventListener("click", startReplay);
-    document.querySelectorAll("[data-speed]").forEach((el) => {
-      el.addEventListener("click", () => setSpeed(el.getAttribute("data-speed")));
-    });
-    setSpeed("normal");
+    const slider = $("#speedSlider");
+    if (slider) {
+      slider.addEventListener("input", () => setPaceMs(slider.value));
+      slider.addEventListener("change", () => setPaceMs(slider.value));
+    }
+    setPaceMs(slider ? slider.value : PACE_DEFAULT_MS);
     updateControlButtons();
     document.addEventListener("keydown", (e) => {
       if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;

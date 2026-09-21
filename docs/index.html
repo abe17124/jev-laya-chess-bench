@@ -49,11 +49,12 @@
       <div class="controls" id="controls">
         <button type="button" id="btnPlay" class="primary big" title="New live game">▶ PLAY</button>
         <button type="button" id="btnReplay" class="big replay" disabled title="Replay last completed game">↺ REPLAY</button>
-        <span class="speed" aria-label="Playback speed">
-          <button type="button" data-speed="slow" title="~1.4s / ply">Slow</button>
-          <button type="button" data-speed="normal" class="active" title="~0.85s / ply">Normal</button>
-          <button type="button" data-speed="fast" title="~0.35s / ply">Fast</button>
-        </span>
+        <label class="speed" for="speedSlider" title="Delay between plies (replay & live reveal)">
+          <span class="speed-ends" aria-hidden="true">Fast</span>
+          <input type="range" id="speedSlider" min="200" max="2000" step="50" value="850" />
+          <span class="speed-ends" aria-hidden="true">Slow</span>
+          <span class="speed-label" id="speedLabel">850 ms/move</span>
+        </label>
         <span class="ply-readout" id="plyLabel">ply 0</span>
       </div>
     </section>
