@@ -285,3 +285,56 @@ body {
   font-size: 0.8rem;
 }
 .speed button:hover { background: var(--bg2); }
+
+.controls button.replay {
+  background: #fff;
+  color: var(--ink);
+  border: 2px solid var(--ink);
+}
+.controls button.replay.playing {
+  background: var(--laya);
+  color: #fff;
+  border-color: var(--laya);
+}
+.controls button.replay:hover:not(:disabled) {
+  background: var(--bg2);
+  color: var(--ink);
+}
+
+.winner-box {
+  width: min(1100px, calc(100% - 1.5rem));
+  margin: 0 auto 0.85rem;
+  border: 4px solid var(--ink);
+  background: #fff;
+  padding: 0.85rem 1rem;
+  text-align: center;
+  letter-spacing: 0.06em;
+  box-shadow: 6px 6px 0 var(--ink);
+}
+.winner-box[hidden] { display: none !important; }
+.winner-box .winner-main {
+  display: block;
+  font-size: clamp(1.85rem, 6vw, 3.2rem);
+  font-weight: 800;
+  text-transform: uppercase;
+  line-height: 1.1;
+}
+.winner-box .winner-sub {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: clamp(0.85rem, 2vw, 1.05rem);
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+.winner-box[data-kind="win"] {
+  background: #fff8e1;
+  border-color: var(--ink);
+}
+.winner-box[data-kind="win"] .winner-main { color: var(--ok); }
+.winner-box[data-kind="draw"] {
+  background: var(--bg2);
+}
+.winner-box[data-kind="draw"] .winner-main { color: var(--ink); }
+.winner-box[data-kind="other"] .winner-main { color: var(--muted); }

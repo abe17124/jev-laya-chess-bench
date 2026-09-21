@@ -1,4 +1,4 @@
-/* JEV vs LAYA — live chess (SSE). Play = new game. Paced board reveal. */
+/* JEV vs LAYA — live chess (SSE). Play = new game. Replay = last completed. */
 (function () {
   "use strict";
 
@@ -9,6 +9,7 @@
   let board = null;
   let chess = null;
   let live = false;
+  let replaying = false;
   let es = null;
   let whiteName = null;
   let blackName = null;
@@ -22,6 +23,11 @@
   let paceMs = SPEEDS.normal;
   let pendingEnd = null;
   let streamDone = false;
+
+  // Client-side store of last completed live game (for Replay).
+  let storedGame = null; // { white, black, plies: [], end: {} }
+  let collectingPlies = [];
+  let viewMode = "idle"; // idle | live | replay
 
   const $ = (sel) => document.querySelector(sel);
 
@@ -66,14 +72,54 @@
   function colorLabel(side) {
     return side === "white" ? "White" : "Black";
   }
+  function shortName(n) {
+    const s = String(n || "").toUpperCase();
+    if (s.startsWith("JEV")) return "JEV";
+    if (s.startsWith("LAYA")) return "LAYA";
+    return s || "?";
+  }
+
+  function updateControlButtons() {
+    const play = $("#btnPlay");
+    const replay = $("#btnReplay");
+    const busy = live || replaying;
+
+    play.disabled = busy;
+    play.textContent = live ? "… LIVE" : "▶ PLAY";
+    play.classList.toggle("playing", live);
+    play.title = live ? "Game in progress" : "New live game";
+
+    const canReplay = !!(storedGame && storedGame.plies && storedGame.plies.length);
+    replay.disabled = busy || !canReplay;
+    replay.textContent = replaying ? "… REPLAY" : "↺ REPLAY";
+    replay.classList.toggle("playing", replaying);
+    replay.title = !canReplay
+      ? "Finish a live game first"
+      : replaying
+        ? "Replaying…"
+        : "Replay last completed game";
+  }
 
   function setPlaying(on) {
     live = on;
-    const btn = $("#btnPlay");
-    btn.disabled = on;
-    btn.textContent = on ? "… LIVE" : "▶ PLAY";
-    btn.classList.toggle("playing", on);
-    btn.title = on ? "Game in progress" : "New live game";
+    if (on) {
+      replaying = false;
+      viewMode = "live";
+    } else if (!replaying) {
+      viewMode = "idle";
+    }
+    updateControlButtons();
+  }
+
+  function setReplaying(on) {
+    replaying = on;
+    if (on) {
+      live = false;
+      viewMode = "replay";
+    } else if (!live) {
+      viewMode = "idle";
+    }
+    updateControlButtons();
   }
 
   function setColors(white, black) {
@@ -96,6 +142,53 @@
       lastLat.jev == null ? "lat —" : `lat ${fmtMs(lastLat.jev)}`;
     $("#layaAvg").textContent =
       lastLat.laya == null ? "lat —" : `lat ${fmtMs(lastLat.laya)}`;
+  }
+
+  function hideWinner() {
+    const box = $("#winnerBox");
+    if (box) {
+      box.hidden = true;
+      box.textContent = "";
+      box.removeAttribute("data-kind");
+    }
+  }
+
+  /** Map PGN-ish result + side names → big WINNER / DRAW label. */
+  function winnerFromResult(result, white, black) {
+    const r = String(result || "*").trim();
+    const w = shortName(white);
+    const b = shortName(black);
+    if (r === "1-0" || r === "1–0") {
+      return { kind: "win", text: `WINNER: ${w}` };
+    }
+    if (r === "0-1" || r === "0–1") {
+      return { kind: "win", text: `WINNER: ${b}` };
+    }
+    if (
+      r === "1/2-1/2" ||
+      r === "½-½" ||
+      r === "1/2–1/2" ||
+      /^draw/i.test(r)
+    ) {
+      return { kind: "draw", text: "DRAW" };
+    }
+    return { kind: "other", text: `RESULT: ${r}` };
+  }
+
+  function showWinner(data) {
+    const box = $("#winnerBox");
+    if (!box) return;
+    const white = (data && data.white) || whiteName;
+    const black = (data && data.black) || blackName;
+    const info = winnerFromResult(data && data.result, white, black);
+    const term = data && data.termination ? ` · ${data.termination}` : "";
+    box.hidden = false;
+    box.setAttribute("data-kind", info.kind);
+    box.innerHTML =
+      `<span class="winner-main">${escapeHtml(info.text)}</span>` +
+      (term
+        ? `<span class="winner-sub">${escapeHtml(term.trim())}</span>`
+        : "");
   }
 
   function clearRevealQueue() {
@@ -124,6 +217,7 @@
     $("#hConf").textContent = "—";
     $("#probs").innerHTML = "";
     $("#resultBadge").hidden = true;
+    hideWinner();
     $("#turnBanner").textContent = "thinking… connecting";
     $("#scoreLine").textContent = "live game starting…";
   }
@@ -179,7 +273,8 @@
     const nextPlayer =
       nextSide === "white" ? whiteName : blackName;
     $("#turnBanner").textContent = `${(nextPlayer || "?").toUpperCase()} to move  ${colorGlyph(nextSide)} ${colorLabel(nextSide)}`;
-    $("#scoreLine").textContent = `LIVE · ${fmtMs(ply.latency_ms)} · ${(ply.player || "").toUpperCase()} ${ply.san || ply.uci || ""}`;
+    const tag = viewMode === "replay" ? "REPLAY" : "LIVE";
+    $("#scoreLine").textContent = `${tag} · ${fmtMs(ply.latency_ms)} · ${(ply.player || "").toUpperCase()} ${ply.san || ply.uci || ""}`;
   }
 
   function applyEnd(data) {
@@ -187,8 +282,17 @@
     badge.hidden = false;
     badge.textContent = `RESULT ${data.result || "*"}${data.termination ? " · " + data.termination : ""}`;
     $("#turnBanner").textContent = "game over";
-    $("#scoreLine").textContent = `done · ${data.result || "*"} · ${data.plies || plyCount} plies`;
-    setPlaying(false);
+    const tag = viewMode === "replay" ? "replay done" : "done";
+    $("#scoreLine").textContent = `${tag} · ${data.result || "*"} · ${data.plies || plyCount} plies`;
+    showWinner({
+      result: data.result,
+      termination: data.termination,
+      white: data.white || whiteName,
+      black: data.black || blackName,
+    });
+    if (live) setPlaying(false);
+    if (replaying) setReplaying(false);
+    updateControlButtons();
   }
 
   function scheduleReveal() {
@@ -276,9 +380,23 @@
     });
   }
 
+  function storeCompletedGame(endData) {
+    storedGame = {
+      white: whiteName,
+      black: blackName,
+      plies: collectingPlies.slice(),
+      end: Object.assign({}, endData, {
+        white: whiteName,
+        black: blackName,
+      }),
+    };
+    updateControlButtons();
+  }
+
   function startLiveGame() {
-    if (live) return;
+    if (live || replaying) return;
     closeStream();
+    collectingPlies = [];
     resetBoard();
     setPlaying(true);
 
@@ -332,6 +450,7 @@
       } catch (_) {
         return;
       }
+      collectingPlies.push(ply);
       enqueuePly(ply);
     });
 
@@ -340,6 +459,7 @@
       try {
         data = JSON.parse(ev.data);
       } catch (_) {}
+      storeCompletedGame(data);
       enqueueEnd(data);
       closeStream();
     });
@@ -377,6 +497,32 @@
     };
   }
 
+  /** Replay last completed game client-side — no API calls. */
+  function startReplay() {
+    if (live || replaying) return;
+    if (!storedGame || !storedGame.plies || !storedGame.plies.length) return;
+    closeStream();
+    resetBoard();
+    setColors(storedGame.white, storedGame.black);
+    setReplaying(true);
+    $("#scoreLine").textContent = `REPLAY · ${shortName(storedGame.white)} (W) vs ${shortName(storedGame.black)} (B)`;
+    $("#turnBanner").textContent = `${shortName(storedGame.white)} to move  ♔ White`;
+    $("#jevWdl").textContent = "replay";
+    $("#layaWdl").textContent = "replay";
+    $("#footerNote").textContent =
+      "replay · " + storedGame.plies.length + " plies · no API";
+
+    storedGame.plies.forEach((ply) => enqueuePly(ply));
+    enqueueEnd(
+      storedGame.end || {
+        result: "*",
+        plies: storedGame.plies.length,
+        white: storedGame.white,
+        black: storedGame.black,
+      }
+    );
+  }
+
   /* Optional recorded replay (collapsed). */
   async function loadReplayOptional() {
     const box = $("#replayBox");
@@ -393,7 +539,7 @@
         btn.className = "match-btn";
         btn.innerHTML = `<span class="t">Game ${i + 1}</span><span class="s">${escapeHtml(g.result || "*")} · ${(g.plies || []).length} plies</span>`;
         btn.addEventListener("click", () => {
-          if (live) return;
+          if (live || replaying) return;
           const last = (g.plies || [])[(g.plies || []).length - 1];
           setColors(g.white, g.black);
           if (last && last.fen_after && board) board.position(last.fen_after, false);
@@ -402,6 +548,12 @@
           const badge = $("#resultBadge");
           badge.hidden = false;
           badge.textContent = `RESULT ${g.result || "*"}`;
+          showWinner({
+            result: g.result,
+            white: g.white,
+            black: g.black,
+            termination: g.termination,
+          });
         });
         list.appendChild(btn);
       });
@@ -426,15 +578,20 @@
   function boot() {
     initBoard();
     $("#btnPlay").addEventListener("click", startLiveGame);
+    $("#btnReplay").addEventListener("click", startReplay);
     document.querySelectorAll("[data-speed]").forEach((el) => {
       el.addEventListener("click", () => setSpeed(el.getAttribute("data-speed")));
     });
     setSpeed("normal");
+    updateControlButtons();
     document.addEventListener("keydown", (e) => {
       if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
       if (e.key === " " || e.key === "Enter") {
         e.preventDefault();
-        startLiveGame();
+        if (!live && !replaying) startLiveGame();
+      }
+      if ((e.key === "r" || e.key === "R") && !live && !replaying) {
+        startReplay();
       }
     });
     loadReplayOptional();
