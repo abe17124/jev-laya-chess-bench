@@ -7,6 +7,7 @@ import json
 import os
 import random
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, AsyncIterator, Literal
@@ -25,8 +26,6 @@ from chess_bench.players.laya_player import LayaPlayer
 DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
 DEFAULT_MAX_PLIES = 80
 
-from contextlib import asynccontextmanager
-
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
@@ -42,7 +41,7 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Jev vs Laya Chess Bench", version="0.2.0", lifespan=_lifespan)
+app = FastAPI(title="Jev vs Laya Chess Bench", version="0.2.1", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -86,8 +85,33 @@ def _run_game_to_queue(
     max_plies: int,
 ) -> None:
     try:
+        q.put(
+            (
+                "status",
+                {
+                    "phase": "loading",
+                    "message": "loading engines…",
+                    "white": white_name,
+                    "black": black_name,
+                },
+            )
+        )
+
+        # Resolve seats; Laya may still be warming on first call.
+        if white_name == "laya" or black_name == "laya":
+            q.put(
+                (
+                    "status",
+                    {
+                        "phase": "loading_laya",
+                        "message": "thinking… loading Laya (first load can be slow)",
+                        "player": "laya",
+                    },
+                )
+            )
         white = _get_player(white_name)
         black = _get_player(black_name)
+
         q.put(
             (
                 "start",
@@ -99,6 +123,20 @@ def _run_game_to_queue(
                 },
             )
         )
+
+        def on_before_ply(board: Any, player: Player) -> None:
+            color = "white" if board.turn else "black"
+            q.put(
+                (
+                    "thinking",
+                    {
+                        "player": player.name,
+                        "color": color,
+                        "ply": board.ply(),
+                        "message": f"{player.name} thinking…",
+                    },
+                )
+            )
 
         def on_ply(ply_rec: dict[str, Any], board: Any, decision: MoveDecision) -> None:
             payload = {
@@ -114,9 +152,16 @@ def _run_game_to_queue(
                 "illegal": ply_rec.get("illegal"),
                 "error": ply_rec.get("error"),
             }
+            # Yield immediately to the SSE consumer — do not buffer the game.
             q.put(("ply", payload))
 
-        game = play_game(white, black, max_plies=max_plies, on_ply=on_ply)
+        game = play_game(
+            white,
+            black,
+            max_plies=max_plies,
+            on_ply=on_ply,
+            on_before_ply=on_before_ply,
+        )
         q.put(
             (
                 "end",
@@ -202,23 +247,35 @@ async def game_stream(
     threading.Thread(target=worker, daemon=True).start()
 
     async def event_gen() -> AsyncIterator[str]:
-        yield _sse("hello", {"live": True})
+        # Flush hello immediately so the client leaves "starting…" fast.
+        yield _sse(
+            "hello",
+            {
+                "live": True,
+                "white": white_name,
+                "black": black_name,
+                "max_plies": max_plies,
+            },
+        )
         while True:
             try:
-                item = await asyncio.to_thread(q.get, True, 0.5)
+                item = await asyncio.to_thread(q.get, True, 0.4)
             except Empty:
+                # Keepalive comment keeps proxies from buffering the stream.
                 yield ": keepalive\n\n"
                 continue
             if item is None:
                 break
             event, data = item
             yield _sse(event, data)
+            # Yield to the event loop so each ply can flush before the next queue item.
+            await asyncio.sleep(0)
 
     return StreamingResponse(
         event_gen(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },

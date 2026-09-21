@@ -1,9 +1,10 @@
-/* JEV vs LAYA — live chess (SSE). Play = new game. */
+/* JEV vs LAYA — live chess (SSE). Play = new game. Paced board reveal. */
 (function () {
   "use strict";
 
   const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
   const MATCH_PATH = "data/jev_vs_laya.json";
+  const SPEEDS = { slow: 1400, normal: 850, fast: 350 };
 
   let board = null;
   let chess = null;
@@ -13,6 +14,14 @@
   let blackName = null;
   let plyCount = 0;
   let lastLat = { jev: null, laya: null };
+
+  // Playback queue: ply/end events arrive as soon as decided; reveal at human pace.
+  let revealQueue = [];
+  let revealTimer = null;
+  let revealBusy = false;
+  let paceMs = SPEEDS.normal;
+  let pendingEnd = null;
+  let streamDone = false;
 
   const $ = (sel) => document.querySelector(sel);
 
@@ -89,7 +98,19 @@
       lastLat.laya == null ? "lat —" : `lat ${fmtMs(lastLat.laya)}`;
   }
 
+  function clearRevealQueue() {
+    revealQueue = [];
+    pendingEnd = null;
+    streamDone = false;
+    revealBusy = false;
+    if (revealTimer) {
+      clearTimeout(revealTimer);
+      revealTimer = null;
+    }
+  }
+
   function resetBoard() {
+    clearRevealQueue();
     plyCount = 0;
     lastLat = { jev: null, laya: null };
     updateLatCards();
@@ -103,8 +124,32 @@
     $("#hConf").textContent = "—";
     $("#probs").innerHTML = "";
     $("#resultBadge").hidden = true;
-    $("#turnBanner").textContent = "starting…";
+    $("#turnBanner").textContent = "thinking… connecting";
     $("#scoreLine").textContent = "live game starting…";
+  }
+
+  function showThinking(data) {
+    const player = (data && data.player) || "?";
+    const color = (data && data.color) || "";
+    const msg =
+      (data && data.message) ||
+      `${String(player).toUpperCase()} thinking…`;
+    const sideBit = color
+      ? `  ${colorGlyph(color)} ${colorLabel(color)}`
+      : "";
+    $("#turnBanner").textContent = `${msg}${sideBit}`;
+    if (!plyCount) {
+      $("#scoreLine").textContent = `waiting · ${String(player).toUpperCase()} thinking…`;
+    }
+  }
+
+  function showStatus(data) {
+    const msg = (data && data.message) || "working…";
+    $("#turnBanner").textContent = msg;
+    $("#scoreLine").textContent = msg;
+    if (data && data.white && data.black) {
+      setColors(data.white, data.black);
+    }
   }
 
   function applyPly(ply) {
@@ -135,6 +180,57 @@
       nextSide === "white" ? whiteName : blackName;
     $("#turnBanner").textContent = `${(nextPlayer || "?").toUpperCase()} to move  ${colorGlyph(nextSide)} ${colorLabel(nextSide)}`;
     $("#scoreLine").textContent = `LIVE · ${fmtMs(ply.latency_ms)} · ${(ply.player || "").toUpperCase()} ${ply.san || ply.uci || ""}`;
+  }
+
+  function applyEnd(data) {
+    const badge = $("#resultBadge");
+    badge.hidden = false;
+    badge.textContent = `RESULT ${data.result || "*"}${data.termination ? " · " + data.termination : ""}`;
+    $("#turnBanner").textContent = "game over";
+    $("#scoreLine").textContent = `done · ${data.result || "*"} · ${data.plies || plyCount} plies`;
+    setPlaying(false);
+  }
+
+  function scheduleReveal() {
+    if (revealBusy || revealTimer) return;
+    if (!revealQueue.length) {
+      if (streamDone && pendingEnd) {
+        const end = pendingEnd;
+        pendingEnd = null;
+        applyEnd(end);
+      }
+      return;
+    }
+    revealBusy = true;
+    const item = revealQueue.shift();
+    if (item.type === "ply") {
+      applyPly(item.data);
+    } else if (item.type === "end") {
+      applyEnd(item.data);
+      revealBusy = false;
+      return;
+    }
+    revealTimer = setTimeout(() => {
+      revealTimer = null;
+      revealBusy = false;
+      scheduleReveal();
+    }, paceMs);
+  }
+
+  function enqueuePly(ply) {
+    revealQueue.push({ type: "ply", data: ply });
+    scheduleReveal();
+  }
+
+  function enqueueEnd(data) {
+    streamDone = true;
+    // Reveal result only after queued plies have been shown.
+    if (revealQueue.length || revealBusy || revealTimer) {
+      pendingEnd = data;
+      scheduleReveal();
+    } else {
+      applyEnd(data);
+    }
   }
 
   function renderProbs(ply) {
@@ -172,6 +268,14 @@
     }
   }
 
+  function setSpeed(name) {
+    const key = String(name || "normal").toLowerCase();
+    paceMs = SPEEDS[key] || SPEEDS.normal;
+    document.querySelectorAll("[data-speed]").forEach((el) => {
+      el.classList.toggle("active", el.getAttribute("data-speed") === key);
+    });
+  }
+
   function startLiveGame() {
     if (live) return;
     closeStream();
@@ -182,8 +286,31 @@
     $("#footerNote").textContent = "live · " + url;
     es = new EventSource(url);
 
-    es.addEventListener("hello", () => {
-      $("#scoreLine").textContent = "connected · waiting for first ply…";
+    es.addEventListener("hello", (ev) => {
+      let data = {};
+      try {
+        data = JSON.parse(ev.data);
+      } catch (_) {}
+      if (data.white && data.black) setColors(data.white, data.black);
+      $("#scoreLine").textContent = "connected · thinking… waiting for first move";
+      $("#turnBanner").textContent = "thinking… loading / first call can be slow";
+    });
+
+    es.addEventListener("status", (ev) => {
+      let data = {};
+      try {
+        data = JSON.parse(ev.data);
+      } catch (_) {}
+      showStatus(data);
+    });
+
+    es.addEventListener("thinking", (ev) => {
+      let data = {};
+      try {
+        data = JSON.parse(ev.data);
+      } catch (_) {}
+      // Status updates apply immediately (not paced) so waits feel labeled.
+      showThinking(data);
     });
 
     es.addEventListener("start", (ev) => {
@@ -193,7 +320,7 @@
       } catch (_) {}
       setColors(data.white, data.black);
       $("#scoreLine").textContent = `LIVE · ${(data.white || "?").toUpperCase()} (W) vs ${(data.black || "?").toUpperCase()} (B)`;
-      $("#turnBanner").textContent = `${(data.white || "?").toUpperCase()} to move  ♔ White`;
+      $("#turnBanner").textContent = `${(data.white || "?").toUpperCase()} thinking…  ♔ White`;
       $("#jevWdl").textContent = "live";
       $("#layaWdl").textContent = "live";
     });
@@ -205,7 +332,7 @@
       } catch (_) {
         return;
       }
-      applyPly(ply);
+      enqueuePly(ply);
     });
 
     es.addEventListener("end", (ev) => {
@@ -213,12 +340,7 @@
       try {
         data = JSON.parse(ev.data);
       } catch (_) {}
-      const badge = $("#resultBadge");
-      badge.hidden = false;
-      badge.textContent = `RESULT ${data.result || "*"}${data.termination ? " · " + data.termination : ""}`;
-      $("#turnBanner").textContent = "game over";
-      $("#scoreLine").textContent = `done · ${data.result || "*"} · ${data.plies || plyCount} plies`;
-      setPlaying(false);
+      enqueueEnd(data);
       closeStream();
     });
 
@@ -232,9 +354,10 @@
         $("#scoreLine").textContent = "error · " + (data.message || "stream error");
         $("#turnBanner").textContent = "error";
         setPlaying(false);
+        clearRevealQueue();
         closeStream();
       } else if (es && es.readyState === EventSource.CLOSED) {
-        if (live) {
+        if (live && !streamDone && !pendingEnd && !revealQueue.length) {
           $("#scoreLine").textContent = "stream closed";
           setPlaying(false);
         }
@@ -243,11 +366,13 @@
 
     es.onerror = () => {
       if (es && es.readyState === EventSource.CLOSED && live) {
-        $("#scoreLine").textContent =
-          "could not reach API — is the live server / tunnel up?";
-        $("#turnBanner").textContent = "offline";
-        setPlaying(false);
-        closeStream();
+        if (!streamDone && !pendingEnd && !revealQueue.length) {
+          $("#scoreLine").textContent =
+            "could not reach API — is the live server / tunnel up?";
+          $("#turnBanner").textContent = "offline";
+          setPlaying(false);
+          closeStream();
+        }
       }
     };
   }
@@ -301,6 +426,10 @@
   function boot() {
     initBoard();
     $("#btnPlay").addEventListener("click", startLiveGame);
+    document.querySelectorAll("[data-speed]").forEach((el) => {
+      el.addEventListener("click", () => setSpeed(el.getAttribute("data-speed")));
+    });
+    setSpeed("normal");
     document.addEventListener("keydown", (e) => {
       if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
       if (e.key === " " || e.key === "Enter") {

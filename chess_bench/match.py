@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
 
@@ -15,6 +14,7 @@ from chess_bench.visual import export_game_html, render_terminal_board
 
 
 OnPly = Callable[[dict[str, Any], chess.Board, MoveDecision], None]
+OnBeforePly = Callable[[chess.Board, Player], None]
 
 
 def play_game(
@@ -24,6 +24,7 @@ def play_game(
     max_plies: int = 400,
     show_board: bool = False,
     on_ply: OnPly | None = None,
+    on_before_ply: OnBeforePly | None = None,
 ) -> dict[str, Any]:
     board = chess.Board()
     plies: list[dict[str, Any]] = []
@@ -31,6 +32,8 @@ def play_game(
 
     while not board.is_game_over(claim_draw=True) and board.ply() < max_plies:
         player = players[board.turn]
+        if on_before_ply:
+            on_before_ply(board, player)
         decision = player.choose(board)
         legal = {m.uci() for m in board.legal_moves}
         uci = decision.move_uci

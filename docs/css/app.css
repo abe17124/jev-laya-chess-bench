@@ -270,3 +270,18 @@ body {
   cursor: not-allowed;
 }
 .replay-opt { margin-top: 0.85rem; }
+
+.speed button.active {
+  background: var(--ink);
+  color: #fff;
+}
+.speed button {
+  font-family: var(--mono);
+  background: #fff;
+  border: 1.5px solid var(--ink);
+  color: var(--ink);
+  padding: 0.25rem 0.45rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.speed button:hover { background: var(--bg2); }
