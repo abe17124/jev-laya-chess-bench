@@ -12,6 +12,19 @@ Players:
 
 State sent to models: FEN + side to move (+ ply metadata). Questions: a single `choice` named `move` with UCI keys and SAN descriptions.
 
+## Live demo (GitHub Pages)
+
+Interactive board viewer (dark desktop UI, replay + HUD):
+
+**https://abe17124.github.io/jev-laya-chess-bench/**
+
+Embedded demos (static JSON under `docs/data/`):
+
+- **Laya vs Random** — System One Laya opening vs uniform random (latency + top-N probs)
+- **Random vs Random** — decisive checkmate (seed 7, 29 plies)
+
+Source lives in `docs/` (GitHub Pages from `/docs` on `main`). No backend, no API keys.
+
 ## Install
 
 ```bash
